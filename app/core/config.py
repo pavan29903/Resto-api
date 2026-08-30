@@ -1,0 +1,102 @@
+"""Central configuration for the Phase 0 pipeline.
+
+Reads from environment variables / a local `.env` file via pydantic-settings.
+In Phase 1 this same Settings object grows to hold DB/Redis/storage config for
+the FastAPI backend — the extraction/images modules already read from it.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Map ISO currency codes the model may detect to a display symbol.
+CURRENCY_SYMBOLS = {
+    "INR": "₹",
+    "USD": "$",
+    "EUR": "€",
+    "GBP": "£",
+    "JPY": "¥",
+    "AED": "د.إ",
+}
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    # Extraction. Default is Gemini Flash — free tier, no credit card.
+    # Escalate to Claude only if accuracy on real menus isn't good enough.
+    extraction_provider: str = "gemini"  # "gemini" | "claude"
+    google_api_key: str | None = None
+    # "gemini-flash-latest" auto-tracks the current Flash model, so it won't go
+    # stale the way a pinned version does (gemini-2.5-flash is already retired
+    # for new accounts). Pin a specific version only if you need reproducibility.
+    gemini_model: str = "gemini-flash-latest"
+    anthropic_api_key: str | None = None
+    extraction_model: str = "claude-opus-4-8"
+
+    # Dish images. Default is "pexels": real, properly-licensed food photographs
+    # searched by dish name. A real photo of the actual dish beats an AI guess,
+    # so we try stock first and only generate when there's no match.
+    image_provider: str = "pexels"
+    # What to try when Pexels has no usable match: "pollinations" (AI) or
+    # "placeholder" (offline card). Set to "placeholder" to avoid slow AI calls.
+    image_fallback: str = "pollinations"
+    pexels_api_key: str | None = None
+
+    pollinations_model: str = "flux"
+    fal_api_key: str | None = None
+    replicate_api_token: str | None = None
+    image_model: str = "fal-ai/flux/schnell"
+
+    # Database (Supabase Postgres)
+    database_url: str | None = None
+
+    # Supabase — project URL + keys. The anon key is safe in the browser; the
+    # service key and JWT secret never leave the backend.
+    supabase_url: str | None = None
+    supabase_anon_key: str | None = None
+    supabase_service_key: str | None = None
+    supabase_jwt_secret: str | None = None
+    supabase_storage_bucket: str = "dish-images"
+
+    # Presentation
+    currency_symbol: str = "₹"
+    public_base_url: str = "http://localhost:8000"
+    # Root domain for published menus. Each restaurant answers on
+    # <slug>.<menu_domain>; empty falls back to path-based URLs.
+    menu_domain: str | None = None
+    owner_whatsapp: str | None = None
+
+    @property
+    def async_database_url(self) -> str:
+        """SQLAlchemy needs the asyncpg driver; Supabase hands out a
+        postgresql:// URI. Normalise it rather than making people edit it."""
+        url = self.database_url or ""
+        if url.startswith("postgresql+asyncpg://"):
+            return url
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return url
+
+    def menu_url_for(self, slug: str) -> str:
+        """The public URL a QR code should point at."""
+        if self.menu_domain:
+            return f"https://{slug}.{self.menu_domain}"
+        return f"{self.public_base_url.rstrip('/')}/r/{slug}"
+
+    def symbol_for(self, currency_code: str | None) -> str:
+        """Display symbol for a detected currency code, with a safe fallback."""
+        if not currency_code:
+            return self.currency_symbol
+        return CURRENCY_SYMBOLS.get(currency_code.upper(), self.currency_symbol)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

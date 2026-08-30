@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.uv/
+
+# Secrets
+.env
+
+# Pipeline outputs (generated menus, images, QR codes) and input photos
+samples/output/
+samples/*.jpg
+samples/*.jpeg
+samples/*.png
+samples/*.webp
+!samples/.gitkeep
