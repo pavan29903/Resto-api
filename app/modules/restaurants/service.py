@@ -114,10 +114,16 @@ async def replace_menu(session: AsyncSession, restaurant: Restaurant, menu: Menu
         )
     ).scalars().all()
 
-    keep: dict[tuple[int, str], tuple[str | None, str | None]] = {}
+    # Two ways back to a dish's photo. By name survives reordering; by position
+    # survives a rename. An owner who fixes a spelling mistake should not lose
+    # the photo they uploaded, and an owner who drags a dish up shouldn't either.
+    by_name: dict[tuple[int, str], tuple[str | None, str | None]] = {}
+    by_position: dict[tuple[int, int], tuple[str | None, str | None]] = {}
     for s_idx, section in enumerate(existing):
-        for item in section.items:
-            keep[(s_idx, item.name.strip().lower())] = (item.image_url, item.image_source)
+        for i_idx, item in enumerate(section.items):
+            photo = (item.image_url, item.image_source)
+            by_name[(s_idx, item.name.strip().lower())] = photo
+            by_position[(s_idx, i_idx)] = photo
 
     if existing:
         # menu_items has ON DELETE CASCADE on section_id, so removing the
@@ -137,9 +143,9 @@ async def replace_menu(session: AsyncSession, restaurant: Restaurant, menu: Menu
         await session.flush()
 
         for i_idx, item_in in enumerate(section_in.items):
-            image_url, image_source = keep.get(
-                (s_idx, item_in.name.strip().lower()), (None, None)
-            )
+            image_url, image_source = by_name.get(
+                (s_idx, item_in.name.strip().lower())
+            ) or by_position.get((s_idx, i_idx), (None, None))
             session.add(
                 MenuItem(
                     section_id=section.id,

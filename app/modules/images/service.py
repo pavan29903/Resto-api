@@ -37,7 +37,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from app.core.config import Settings
 
 _WIDTH, _HEIGHT = 768, 512
-_UA = "MenuSnap/0.1 (Phase 0 pipeline)"
+_UA = "RestoFood/0.1 (Phase 0 pipeline)"
 
 
 def _prompt(name: str, description: str) -> str:

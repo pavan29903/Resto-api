@@ -1,4 +1,4 @@
-"""MenuSnap API.
+"""RestoFood API.
 
 Owner routes are authenticated with a Supabase session and scoped to that
 owner; public routes serve the menu a diner sees after scanning a QR code.
@@ -22,17 +22,17 @@ from app.modules.auth.service import current_owner
 from app.modules.extraction.service import MEDIA_TYPES, extract_menu
 from app.modules.restaurants.router import owner_router, public_router
 
-app = FastAPI(title="MenuSnap API", version="0.2.0")
+app = FastAPI(title="RestoFood API", version="0.2.0")
 
-# The Next.js frontend runs on its own origin. Narrow this to the deployed
-# frontend origin before going live.
+# The frontend is a separate origin, and once a domain is attached each
+# restaurant is a separate origin again (<slug>.restofood.in). Both come from
+# settings so production never has to allow a wildcard like *.vercel.app,
+# which would let anyone's deployment call this API with a user's session.
+_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=_settings.allowed_origins,
+    allow_origin_regex=_settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,7 +79,7 @@ async def api_extract(
     if not files:
         raise HTTPException(400, "Choose at least one photo of your menu card.")
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="menusnap_"))
+    tmp_dir = Path(tempfile.mkdtemp(prefix="restofood_"))
     try:
         saved: list[Path] = []
         for upload in files:

@@ -1,0 +1,43 @@
+# Fly.io config for the RestoFood API.
+#
+# Region is Mumbai (bom): diners load menus on 4G inside Indian restaurants,
+# and the Supabase project sits in ap-south-1, so keeping the API next to both
+# saves a round trip on every request.
+
+app = "restofood-api"
+primary_region = "bom"
+
+[build]
+
+[env]
+  PORT = "8080"
+
+# Migrations run once per deploy, before any new machine takes traffic. If a
+# migration fails the release is aborted and the old version keeps serving.
+[deploy]
+  release_command = "alembic upgrade head"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  # Keeping one machine warm avoids a cold start for the first diner who scans
+  # a QR code. Set to 0 to save money while nobody is using it yet.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 60
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

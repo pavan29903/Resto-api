@@ -63,6 +63,27 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str | None = None
     supabase_storage_bucket: str = "dish-images"
 
+    # Comma-separated origins allowed to call this API from a browser, e.g.
+    # "https://restofood.in,https://restofood.vercel.app". Local dev origins are
+    # always permitted; anything else must be listed here.
+    cors_origins: str = ""
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        local = ["http://localhost:3000", "http://127.0.0.1:3000"]
+        extra = [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
+        return local + extra
+
+    @property
+    def cors_origin_regex(self) -> str | None:
+        """Every restaurant answers on its own subdomain, so the browser origin
+        differs per restaurant and can't be enumerated. Allow exactly
+        <anything>.<menu_domain> and nothing else."""
+        if not self.menu_domain:
+            return None
+        escaped = self.menu_domain.replace(".", r"\.")
+        return rf"https://([a-z0-9-]+\.)?{escaped}"
+
     # Presentation
     currency_symbol: str = "₹"
     public_base_url: str = "http://localhost:8000"

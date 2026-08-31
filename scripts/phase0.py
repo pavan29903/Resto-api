@@ -50,7 +50,7 @@ def _collect_images(paths: list[str]) -> list[Path]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MenuSnap Phase 0 pipeline")
+    parser = argparse.ArgumentParser(description="RestoFood Phase 0 pipeline")
     parser.add_argument(
         "--images", nargs="+", required=True, help="Menu photo(s) or a folder of photos."
     )

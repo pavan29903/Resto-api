@@ -35,7 +35,7 @@ class Owner(Base, TimestampMixin):
 
 
 class Restaurant(Base, TimestampMixin):
-    """One cafe. `slug` is the subdomain: <slug>.menusnap.in"""
+    """One cafe. `slug` is the subdomain: <slug>.restofood.in"""
 
     __tablename__ = "restaurants"
     __table_args__ = (UniqueConstraint("slug", name="uq_restaurants_slug"),)

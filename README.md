@@ -1,6 +1,6 @@
-# resto-api — MenuSnap backend
+# resto-api — RestoFood backend
 
-FastAPI backend for **MenuSnap**: small cafes upload photos of their paper menu
+FastAPI backend for **RestoFood**: small cafes upload photos of their paper menu
 and get a hosted online menu with AI dish images, an ordering flow, and a printable
 QR — fully automatic. See the plan in `~/.claude/plans/` for the full picture.
 

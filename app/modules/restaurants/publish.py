@@ -104,7 +104,7 @@ async def run_publish(
                 storage = StorageClient.from_settings(settings)
                 storage.ensure_bucket()
 
-                with tempfile.TemporaryDirectory(prefix="menusnap_") as tmp:
+                with tempfile.TemporaryDirectory(prefix="restofood_") as tmp:
                     tmp_dir = Path(tmp)
                     for item in targets:
                         local = tmp_dir / f"{item.id}.png"

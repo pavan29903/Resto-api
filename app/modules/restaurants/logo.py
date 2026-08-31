@@ -65,3 +65,43 @@ def process_logo(raw: bytes) -> bytes:
         out = io.BytesIO()
         img.save(out, format="PNG", optimize=True)
         return out.getvalue()
+
+
+# Dish photos are cropped to the same box every provider writes, so an
+# owner's own photo drops into the menu grid without shifting the layout.
+DISH_W, DISH_H = 768, 512
+
+
+def process_dish_photo(raw: bytes) -> bytes:
+    """Validate an owner-supplied dish photo and fit it to the menu's box.
+
+    Same validation as a logo — re-encoded, never trusted as uploaded — but
+    cropped to fill rather than contained, because a dish photo is scenery
+    and losing an edge matters less than an inconsistent grid.
+    """
+    if not raw:
+        raise LogoError("That file was empty. Try choosing it again.")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise LogoError("That photo is larger than 5 MB. Try a smaller file.")
+
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            fmt = (probe.format or "").upper()
+            if fmt not in ACCEPTED:
+                raise LogoError(
+                    f"{fmt or 'That file type'} isn't supported. Use a PNG, JPG or WEBP."
+                )
+            probe.verify()
+    except UnidentifiedImageError as exc:
+        raise LogoError("That file isn't an image we can read.") from exc
+    except LogoError:
+        raise
+    except Exception as exc:
+        raise LogoError("We couldn't read that image.") from exc
+
+    with Image.open(io.BytesIO(raw)) as img:
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        img = ImageOps.fit(img, (DISH_W, DISH_H), method=Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        return out.getvalue()

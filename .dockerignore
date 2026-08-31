@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets never enter the image — they're set as Fly secrets instead.
+.env
+.env.bak
+.env.local
+
+.git/
+.gitignore
+samples/
+scripts/
+README.md
+uv.lock
+*.md
