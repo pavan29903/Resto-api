@@ -1,161 +1,168 @@
-# resto-api — RestoFood backend
+# RestoFood — API
 
-FastAPI backend for **RestoFood**: small cafes upload photos of their paper menu
-and get a hosted online menu with AI dish images, an ordering flow, and a printable
-QR — fully automatic. See the plan in `~/.claude/plans/` for the full picture.
+Turns a photograph of a paper menu card into a menu people can read on their
+phones.
 
-This repo currently contains **Phase 0**: the extraction + image + site + QR
-**pipeline**, written as reusable `app/modules/*` code (the seed of the Phase 1
-FastAPI backend) plus a CLI runner. No web server or database yet.
+A restaurant owner uploads a photo of the card they already have. A vision
+model reads it into structured data, the owner corrects anything wrong, a
+photograph is found for every dish, and the result is published at the
+restaurant's own web address with a QR code for the tables.
 
-## What Phase 0 does
+FastAPI, Postgres, deployed on Render. The web app is a separate repository:
+**[Resto-ui](https://github.com/pavan29903/Resto-ui)**.
+
+---
+
+## What happens when a menu is published
 
 ```
-menu photo(s) ──▶ structured menu (vision LLM) ──▶ menu.json  (owner reviews/edits)
-              └─▶ one AI image per dish ──────────┐
-                                                  ▼
-                          nice static menu page (index.html) + QR + printable table tent
+menu photo
+   │
+   ├─ vision model reads it into sections, dishes, prices, veg marks
+   │
+   ├─ owner reviews and corrects            ← nothing is published unreviewed
+   │
+   ├─ a photograph is found for each dish   ← Pexels, then AI, then a plain card
+   │
+   └─ stored, and served at <slug>.restofood.in with a printable QR code
 ```
 
-## Setup
+Two decisions in there are worth stating plainly.
 
-Prereqs: Python 3.11+ and [uv](https://docs.astral.sh/uv/) (`pip install uv`).
+**The review step is mandatory.** Extraction is good but not perfect, and a
+restaurant will not tolerate a wrong price on a customer's screen. The owner
+sees every dish before anything goes live.
+
+**Dish photographs are licensed, not scraped.** Pexels content is free for
+commercial use with no attribution required, which is what makes it safe on a
+paying restaurant's menu. Images pulled from a web search are not, and the
+liability would land on both us and the restaurant.
+
+---
+
+## Running it locally
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-cd resto-api
-uv sync --extra gemini        # default setup: free Gemini extraction + free images
-cp .env.example .env          # paste your GOOGLE_API_KEY (free, 30 seconds)
-# (PowerShell: Copy-Item .env.example .env)
-
-# optional paid providers, only if you escalate later:
-uv sync --extra fal           # AI dish images via fal.ai (FLUX)
-uv sync --extra replicate     # AI dish images via Replicate
-# (Claude extraction needs no extra — the anthropic SDK is a base dependency)
+uv sync --extra gemini
+cp .env.example .env                 # PowerShell: Copy-Item .env.example .env
+uv run uvicorn app.main:app --reload --port 8222
 ```
 
-### Not using uv?
+Interactive API documentation is then at <http://localhost:8222/docs>.
 
-Dependencies live in `pyproject.toml`, with exact versions locked in `uv.lock`.
-A pinned `requirements.txt` is also committed for plain-pip and deploy targets
-that expect one:
+### What you need in `.env`
+
+Only two keys, and both are free:
+
+| Key | Where | Free tier |
+|---|---|---|
+| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | 1,500 requests/day |
+| `PEXELS_API_KEY` | [pexels.com/api](https://www.pexels.com/api/) | 20,000 images/month |
+
+Plus a [Supabase](https://supabase.com) project for the database, auth and
+image storage. Copy `DATABASE_URL` from **Settings → Database → Connection
+string**, and the keys from **Settings → API**.
+
+> Use the **session pooler** connection string, not `db.<ref>.supabase.co` —
+> the direct host is IPv6-only and unreachable from most networks. And
+> percent-encode special characters in the password: `pass@word` becomes
+> `pass%40word`.
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows;  source .venv/bin/activate on macOS/Linux
-pip install -r requirements.txt
+uv run alembic upgrade head          # create the tables
 ```
 
-Regenerate it after changing dependencies:
+### Costs, in practice
 
-```bash
-uv export --format requirements-txt --no-hashes --no-dev --extra gemini -o requirements.txt
-```
+Onboarding one restaurant costs about **two paise** — a fraction of a cent —
+and nothing after that. Menus are read once; photographs are found once.
 
-### Models — free by default, escalate only if accuracy demands it
+| | Provider | Per restaurant |
+|---|---|---|
+| Reading the menu | Gemini Flash | ~₹1 |
+| Dish photographs | Pexels | free |
+| Everything after | — | nothing |
 
-| Step | Default | Cost | Escalate to |
-|------|---------|------|-------------|
-| **Extraction** | `gemini-2.5-flash` | **Free** — 1,500 req/day, no card | `claude-opus-4-8` (~$0.13/menu) |
-| **Dish images** | `pollinations` (FLUX) | **Free** — no key, ~15s/image | `fal-ai/flux/schnell` (~$0.003/image) |
+Both can be swapped for stronger paid models (`claude-opus-4-8` for reading,
+FLUX via fal.ai for images) by changing two lines in `.env`.
 
-Get a free Gemini key at <https://aistudio.google.com/apikey>. That is the only
-key needed to run the whole pipeline. Note: on Gemini's free tier Google may use
-your data to improve their products — fine for test menus, revisit before real
-customer data.
+---
 
-`IMAGE_PROVIDER=placeholder` skips AI images entirely (instant, offline) if you
-just want to test the flow.
-
-## Run
-
-### Option A — the web UI (recommended)
-
-```bash
-uv run uvicorn app.main:app --reload --port 8100
-```
-
-Open <http://localhost:8100> and work through the three steps:
-
-1. **Upload** your menu-card photos (drag & drop, multiple pages OK)
-2. **Review & fix** — the extracted menu appears in an editable table. AI
-   extraction is never perfect; correct names/prices here before publishing.
-3. **Publish** — generates dish images, the menu site, and the QR code, with a
-   live progress bar. The finished menu previews inline next to its QR.
-
-> While testing, keep the **"limit to N dishes"** box small (default 6). The free
-> image API takes ~15s per dish, so a 40-dish menu would take ~10 minutes.
-
-API docs (auto-generated) are at <http://localhost:8100/docs>.
-
-### Option B — the CLI
-
-```bash
-# 1. Drop menu-card photos in samples/
-# 2. Run the pipeline (free models by default)
-uv run python scripts/phase0.py --images samples/menu.jpg --name "Blue Tokai"
-#    or point it at a whole folder:
-uv run python scripts/phase0.py --images samples/ --name "Blue Tokai"
-```
-
-### Escalating when the free model gets it wrong
-
-Override per-run without editing `.env`, and write to a separate folder so you
-can diff the two `menu.json` files side by side:
-
-```bash
-# Free baseline
-uv run python scripts/phase0.py --images samples/menu.jpg --name X --out out/gemini
-
-# Same photo on Claude, to see what accuracy you're missing
-uv run python scripts/phase0.py --images samples/menu.jpg --name X --out out/claude \
-    --provider claude --model claude-opus-4-8 --skip-images
-```
-
-Flags: `--provider {gemini,claude}` · `--model <id>` ·
-`--image-provider {pollinations,placeholder,fal,replicate}`.
-Add `--skip-images` when you only care about extraction accuracy — it makes the
-run seconds instead of minutes.
-
-Output lands in `samples/output/<slug>/`:
-
-- `menu.json` — the extracted, structured menu (the owner's review/edit artifact)
-- `index.html` — the menu website (open it in a browser)
-- `images/` — one image per dish
-- `qr.png`, `tent.png` — the QR code and a printable table tent
-
-### Test the QR on a real phone
-
-```bash
-cd samples/output/blue-tokai
-python -m http.server 8000
-# On your phone (same Wi-Fi) open http://<your-computer-LAN-ip>:8000
-```
-
-To bake that LAN URL into the QR, re-run with `--menu-url http://<lan-ip>:8000 --skip-images`.
-
-Set `OWNER_WHATSAPP` in `.env` to add an "Order on WhatsApp" button to the page —
-a cheap way to measure ordering intent in Phase 0 before the real ordering backend.
-
-## Layout
+## How it's put together
 
 ```
 app/
-  core/config.py            # settings (extends into the Phase 1 backend config)
-  schemas/menu.py           # Menu / MenuSection / MenuItem (extraction target)
+  main.py                 the app: CORS, extraction, health
+  core/
+    config.py             settings, and the rules for a menu's public URL
+    db.py                 async engine and per-request session
+    storage.py            Supabase Storage — dish photographs and logos
+  models/                 owners · restaurants · sections · dishes
   modules/
-    extraction/service.py   # photo -> structured menu (Claude default, Gemini optional)
-    images/service.py       # dish images (placeholder default, fal / replicate)
-    site/service.py + templates/menu.html.j2
-    qr/service.py           # QR + printable table tent
-scripts/phase0.py           # the CLI runner (this is throwaway; the modules are not)
+    auth/                 verifies a Supabase session against its public keys
+    extraction/           photo → structured menu
+    images/               finding a photograph for a dish
+    restaurants/          the owner's API, publishing, logos, per-dish photos
+    qr/                   QR codes and the printable table card
+  schemas/menu.py         the shape the vision model must return
+alembic/                  migrations
 ```
 
-Phase 1 adds `app/main.py` (FastAPI), `app/modules/*/router.py`, async SQLAlchemy
-models, Alembic, Redis/arq jobs, and WebSocket order delivery — reusing the modules
-above.
+Domain modules are kept separate on purpose. If one needs to scale on its own
+later — image generation is the likely first — it can move out to its own
+service without a rewrite.
 
-## Verify
+### The endpoints
 
-```bash
-uv run python scripts/smoke_test.py   # offline: images + site + QR on a sample menu (no API key)
-```
+| | |
+|---|---|
+| `POST /api/extract` | photo → structured menu *(signed in)* |
+| `GET&nbsp;/api/me/restaurants` | the owner's menus |
+| `POST /api/restaurants` | create one from a reviewed menu |
+| `PATCH /api/restaurants/{id}` | name, address, WhatsApp, dishes |
+| `POST /api/restaurants/{id}/publish` | find photographs, go live |
+| `POST /api/restaurants/{id}/logo` | the restaurant's logo |
+| `POST /api/restaurants/{id}/items/{id}/photo` | replace one dish's photograph |
+| `GET&nbsp;/api/restaurants/{id}/qr.png` | QR code, or `?tent=true` for the table card |
+| `GET&nbsp;/api/public/menus/{slug}` | what a diner sees — no auth, by design |
+
+Owner routes are scoped to the signed-in owner, so one restaurant can never
+read or change another's menu.
+
+---
+
+## A few things that will bite you
+
+**Photographs the owner chose are never overwritten.** Each dish records where
+its photograph came from — `pexels`, `ai`, or `owner` — and re-publishing skips
+anything marked `owner`.
+
+**Renaming a dish keeps its photograph.** Menus are rewritten wholesale on
+save, so images are re-matched by name first and position second. Renaming
+survives; reordering survives; doing both to the same dish in one save does
+not.
+
+**Some subdomains are reserved.** `api`, `www`, `admin` and about twenty-five
+others can never become a restaurant's address, or they would shadow our own
+hosts. The list lives in `modules/restaurants/service.py` and is mirrored in
+the web app's middleware — change both together.
+
+**Nothing is written to local disk.** A deployed container's filesystem is
+temporary, so photographs go to object storage and menus to Postgres.
+
+---
+
+## Deploying
+
+See **[DEPLOY.md](DEPLOY.md)** — Render (free) or Fly.io (Mumbai, no cold
+start), with the frontend on Vercel. Neither needs Docker installed locally.
+
+---
+
+## Not built yet
+
+Ordering. This serves menus; it does not take orders. There is no orders table
+and no live connection to a kitchen screen, so a diner reads the menu and then
+speaks to a server. That is the next substantial piece of work.

@@ -1,0 +1,52 @@
+# Render blueprint for the RestoFood API.
+#
+# Free tier caveats worth knowing before a real cafe depends on this:
+#   - The service spins down after 15 minutes idle; the next request pays a
+#     30-60s cold start. See the keep-warm note in DEPLOY.md.
+#   - Singapore is the closest region to India (~100-150ms). Fly.io's Mumbai
+#     region is ~20-40ms if latency starts to matter.
+#   - 750 instance hours/month covers one always-on service (a month is ~730).
+
+services:
+  - type: web
+    name: restofood-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+
+    envVars:
+      # Render injects PORT; the Dockerfile's entrypoint honours it.
+      - key: PORT
+        value: 8080
+
+      # Free plans have no pre-deploy hook, so migrations run at container
+      # start instead. Alembic is idempotent, so a restart is harmless.
+      - key: MIGRATE_ON_START
+        value: "1"
+
+      - key: EXTRACTION_PROVIDER
+        value: gemini
+      - key: IMAGE_PROVIDER
+        value: pexels
+
+      # Secrets — set these in the Render dashboard, never in this file.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: MENU_DOMAIN
+        sync: false

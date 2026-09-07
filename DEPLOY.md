@@ -14,62 +14,91 @@ Deploy the **API first** — the frontend needs its URL.
 
 ---
 
-## 1. API on Fly.io
+## 1. API — pick a host
 
-### Install flyctl (one time)
+Both options use the same `Dockerfile`; you can switch later by redeploying.
+
+| | Render (free) | Fly.io (~$2-5/mo) |
+|---|---|---|
+| Cost | **$0**, no card | Card required |
+| Closest region | Singapore, ~100-150ms from India | **Mumbai, ~20-40ms** |
+| When idle | **Sleeps after 15 min → 30-60s cold start** | Stays warm |
+
+Start on **Render** while you're testing. Move to Fly before a real cafe
+depends on it — a diner who waits 50 seconds for a menu just puts the phone
+down.
+
+Two things already soften the cold start: menus are cached at Vercel's edge
+for 60 seconds, so most scans never reach the API at all, and
+`.github/workflows/keep-warm.yml` pings the service every 10 minutes.
+
+---
+
+### Option A — Render (free, no card)
+
+1. <https://dashboard.render.com> → **New → Web Service**
+2. Connect GitHub, pick **`pavan29903/Resto-api`**
+3. Render reads `render.yaml` and fills in the Docker settings. Confirm:
+   - Runtime **Docker**, Region **Singapore**, Plan **Free**
+4. Add the secrets under **Environment** (everything marked `sync: false`):
+
+```
+DATABASE_URL          postgresql://postgres.<ref>:<url-encoded-pw>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres
+SUPABASE_URL          https://<ref>.supabase.co
+SUPABASE_ANON_KEY     sb_publishable_...
+SUPABASE_SERVICE_KEY  sb_secret_...
+GOOGLE_API_KEY        ...
+PEXELS_API_KEY        ...
+```
+
+5. **Create Web Service.** First build takes ~5 minutes.
+
+Migrations run at container start (`MIGRATE_ON_START=1`) because Render's free
+plan has no pre-deploy hook.
+
+Your URL: `https://restofood-api.onrender.com`
+
+**Keep it warm:** in GitHub → Settings → Secrets and variables → Actions →
+**Variables**, add `API_URL` = your Render URL. The bundled workflow then pings
+it every 10 minutes.
+
+---
+
+### Option B — Fly.io (Mumbai, stays warm)
 
 ```powershell
 iwr https://fly.io/install.ps1 -useb | iex
-fly auth signup   # or: fly auth login
+fly auth signup
+cd resto-api
+fly launch --no-deploy      # say NO to Postgres and Redis
 ```
 
-### Launch
-
-From `resto-api/`:
-
-```powershell
-fly launch --no-deploy
-```
-
-Say **no** to creating a Postgres database and to Redis — Supabase is already
-the database. `fly.toml` in this repo already sets the app name, the Mumbai
-region (`bom`), the health check, and runs `alembic upgrade head` on every
-deploy.
-
-### Set the secrets
-
-These are the values from your local `.env`. They are never baked into the
-image.
+Set the same secrets:
 
 ```powershell
 fly secrets set `
-  DATABASE_URL="postgresql://postgres.<ref>:<url-encoded-password>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres" `
+  DATABASE_URL="postgresql://postgres.<ref>:<url-encoded-pw>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres" `
   SUPABASE_URL="https://<ref>.supabase.co" `
   SUPABASE_ANON_KEY="sb_publishable_..." `
   SUPABASE_SERVICE_KEY="sb_secret_..." `
   GOOGLE_API_KEY="..." `
-  PEXELS_API_KEY="..." `
-  EXTRACTION_PROVIDER="gemini" `
-  IMAGE_PROVIDER="pexels" `
-  PUBLIC_BASE_URL="https://<your-vercel-app>.vercel.app"
+  PEXELS_API_KEY="..."
 ```
-
-> **Use the session-pooler DATABASE_URL**, not the `db.<ref>.supabase.co` one.
-> The direct host is IPv6-only and unreachable from most networks.
->
-> **Percent-encode special characters in the password** — a literal `@` breaks
-> the URI. `Keevan@2815` becomes `Keevan%402815`.
-
-### Deploy
 
 ```powershell
 fly deploy
-fly open /health      # expect {"ok":true}
+fly open /health     # expect {"ok":true}
 ```
 
-Note the URL it prints (`https://restofood-api.fly.dev`) — the frontend needs it.
+Fly runs migrations as a `release_command`, so a failed migration aborts the
+deploy instead of crash-looping.
 
 ---
+
+> **Whichever you choose**, use the **session-pooler** `DATABASE_URL`, not
+> `db.<ref>.supabase.co` — the direct host is IPv6-only and unreachable from
+> most networks. And percent-encode the password: `Keevan@2815` becomes
+> `Keevan%402815`.
 
 ## 2. Frontend on Vercel
 
@@ -81,7 +110,7 @@ No CLI needed.
 
 | Name | Value |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | `https://restofood-api.fly.dev` |
+| `NEXT_PUBLIC_API_URL` | `https://restofood-api.onrender.com` (or your Fly URL) |
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://<ref>.supabase.co` |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `sb_publishable_...` |
 
@@ -96,9 +125,8 @@ key stays on Fly.
 
 Tell the API which origin may call it, then redeploy:
 
-```powershell
-fly secrets set CORS_ORIGINS="https://<your-app>.vercel.app"
-```
+Render: add `CORS_ORIGINS` and `PUBLIC_BASE_URL` under Environment.
+Fly: `fly secrets set CORS_ORIGINS="https://<your-app>.vercel.app" PUBLIC_BASE_URL="https://<your-app>.vercel.app"`
 
 Then in Supabase → **Authentication → URL Configuration**, set the Site URL to
 your Vercel URL and add it under Redirect URLs, or email confirmation links
@@ -144,7 +172,8 @@ before this change.**
 | | |
 |---|---|
 | Vercel Hobby | Free |
-| Fly.io, 1 shared-cpu-1x / 512 MB | ~$2–5/month |
+| Render Free | $0 — sleeps when idle |
+| Fly.io, 1 shared-cpu-1x / 512 MB | ~$2–5/month, stays warm |
 | Supabase Free | Free — **but a project pauses after 7 days idle.** Move to Pro ($25/mo) before a real cafe depends on it |
 | Domain | ~₹1,000/year |
 
@@ -152,7 +181,8 @@ before this change.**
 
 | Symptom | Cause |
 |---|---|
-| `release_command` fails on deploy | `DATABASE_URL` wrong or unencoded password |
+| Migrations fail on deploy | `DATABASE_URL` wrong or unencoded password |
+| First request takes ~50s | Render free tier cold start — set the `API_URL` variable so the keep-warm workflow runs |
 | Menu loads, console won't sign in | Supabase Site URL still `localhost` |
 | Browser console shows a CORS error | `CORS_ORIGINS` doesn't list the Vercel origin |
 | `getaddrinfo failed` in logs | Using the IPv6-only direct DB host instead of the pooler |
