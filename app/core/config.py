@@ -70,7 +70,14 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins(self) -> list[str]:
-        local = ["http://localhost:3000", "http://127.0.0.1:3000"]
+        # 3000 is Next's default; 5005 is ours, for when 3000 is taken by
+        # something else. Both loopback spellings, because a browser treats
+        # localhost and 127.0.0.1 as different origins.
+        local = [
+            f"http://{host}:{port}"
+            for port in (3000, 5005)
+            for host in ("localhost", "127.0.0.1")
+        ]
         extra = [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
         return local + extra
 
