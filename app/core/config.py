@@ -37,6 +37,58 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-flash-latest"
     anthropic_api_key: str | None = None
     extraction_model: str = "claude-opus-4-8"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4o-mini"
+
+    # Tried in order when the primary provider is busy or failing, as
+    # "provider[:model]" pairs. A provider with no API key is skipped, so this
+    # default is safe to ship as-is: the second Gemini model costs nothing and
+    # needs no new key, and OpenAI simply does not engage until you set
+    # OPENAI_API_KEY. Set to "" to disable fallbacks entirely.
+    #
+    # The first fallback is a *different Gemini model* on purpose: an overload
+    # is usually per-model capacity, so the cheapest escape is a sibling model
+    # on the key you already have.
+    extraction_fallbacks: str = "gemini:gemini-flash-lite-latest,openai:gpt-4o-mini"
+
+    def _default_model(self, provider: str) -> str:
+        return {
+            "gemini": self.gemini_model,
+            "claude": self.extraction_model,
+            "openai": self.openai_model,
+        }.get(provider, "")
+
+    def has_extraction_key(self, provider: str) -> bool:
+        return bool(
+            {
+                "gemini": self.google_api_key,
+                "claude": self.anthropic_api_key,
+                "openai": self.openai_api_key,
+            }.get(provider)
+        )
+
+    @property
+    def extraction_chain(self) -> list[tuple[str, str]]:
+        """(provider, model) pairs to try in order, primary first.
+
+        Providers without a key are filtered out here rather than failing at
+        call time, so a missing OPENAI_API_KEY is a shorter chain and not an
+        error in the middle of reading someone's menu.
+        """
+        primary = self.extraction_provider.strip().lower()
+        chain: list[tuple[str, str]] = [(primary, self._default_model(primary))]
+
+        for spec in self.extraction_fallbacks.split(","):
+            spec = spec.strip()
+            if not spec:
+                continue
+            provider, _, model = spec.partition(":")
+            provider = provider.strip().lower()
+            model = model.strip() or self._default_model(provider)
+            if provider and model and (provider, model) not in chain:
+                chain.append((provider, model))
+
+        return [(p, m) for p, m in chain if self.has_extraction_key(p)]
 
     # Dish images. Default is "pexels": real, properly-licensed food photographs
     # searched by dish name. A real photo of the actual dish beats an AI guess,

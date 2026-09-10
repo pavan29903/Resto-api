@@ -88,6 +88,28 @@ and nothing after that. Menus are read once; photographs are found once.
 Both can be swapped for stronger paid models (`claude-opus-4-8` for reading,
 FLUX via fal.ai for images) by changing two lines in `.env`.
 
+### When the vision model is busy
+
+Free vision tiers return `503 — this model is currently experiencing high
+demand` often enough that a single attempt makes the product look broken. This
+is the one step an owner cannot route around, so it gets three defences:
+
+1. **Retry** the same model up to three times with backoff and jitter — but
+   only on transient faults. A bad key or an unreadable file fails identically
+   every time, so retrying it just makes the owner wait longer for the same
+   answer.
+2. **Fall through** to the next provider in `EXTRACTION_FALLBACKS`. The first
+   fallback is a *second Gemini model*, because a 503 is usually per-model
+   capacity — the cheapest escape is a sibling model on the key you already
+   have. OpenAI comes after that and stays dormant until `OPENAI_API_KEY` is
+   set.
+3. **Answer 503, not 500.** Nothing is broken and the next attempt will
+   probably work; the owner is told exactly that, and the provider's raw error
+   goes to the log rather than to their screen.
+
+`GET /api/config` reports `extraction_chain` — the providers that would
+actually be tried, with unkeyed ones already filtered out.
+
 ---
 
 ## How it's put together
