@@ -67,18 +67,18 @@ class Settings(BaseSettings):
             }.get(provider)
         )
 
-    @property
-    def extraction_chain(self) -> list[tuple[str, str]]:
+    def _chain(
+        self, primary: tuple[str, str], fallbacks: str
+    ) -> list[tuple[str, str]]:
         """(provider, model) pairs to try in order, primary first.
 
         Providers without a key are filtered out here rather than failing at
         call time, so a missing OPENAI_API_KEY is a shorter chain and not an
         error in the middle of reading someone's menu.
         """
-        primary = self.extraction_provider.strip().lower()
-        chain: list[tuple[str, str]] = [(primary, self._default_model(primary))]
+        chain: list[tuple[str, str]] = [primary]
 
-        for spec in self.extraction_fallbacks.split(","):
+        for spec in fallbacks.split(","):
             spec = spec.strip()
             if not spec:
                 continue
@@ -89,6 +89,44 @@ class Settings(BaseSettings):
                 chain.append((provider, model))
 
         return [(p, m) for p, m in chain if self.has_extraction_key(p)]
+
+    @property
+    def extraction_chain(self) -> list[tuple[str, str]]:
+        primary = self.extraction_provider.strip().lower()
+        return self._chain(
+            (primary, self._default_model(primary)), self.extraction_fallbacks
+        )
+
+    @property
+    def image_check_chain(self) -> list[tuple[str, str]]:
+        """Separate from the extraction chain, and in the opposite order.
+
+        Checking a photo starts on the *lighter* model and escalates, because
+        the question is easy and a publish run asks it once per dish; reading a
+        menu card starts on the stronger one and falls back. Same machinery,
+        different priorities.
+        """
+        return self._chain(("gemini", self.image_check_model), self.image_check_fallbacks)
+
+    # Before accepting a stock photo, show the candidates to the vision model
+    # and let it pick the one that actually depicts the dish — or reject them
+    # all. Stock libraries are thin on regional Indian food, and the first
+    # result for "Veg Manchurian" is often just noodles.
+    #
+    # Costs one extra vision call per dish (free on Gemini's tier) and a few
+    # seconds per dish at publish time. Turn off to take the first result.
+    validate_images: bool = True
+    # How many Pexels results to weigh up. More candidates means a better
+    # chance one is right, and a bigger prompt.
+    image_candidates: int = 5
+    # Deliberately not the extraction model. "Which of these five photos is
+    # biryani" is a far easier question than reading a whole menu card, and
+    # running it on a different model keeps a publish run off the same
+    # capacity pool the extraction just used — the 503s arrive in waves.
+    image_check_model: str = "gemini-flash-lite-latest"
+    # Escalation for the check, same "provider[:model]" form as
+    # EXTRACTION_FALLBACKS. Unkeyed providers are skipped.
+    image_check_fallbacks: str = "gemini:gemini-flash-latest,openai:gpt-4o-mini"
 
     # Dish images. Default is "pexels": real, properly-licensed food photographs
     # searched by dish name. A real photo of the actual dish beats an AI guess,

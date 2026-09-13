@@ -8,6 +8,13 @@ through a chain rather than relying on any single source:
 
     pexels  ->  AI generation (pollinations)  ->  offline placeholder
 
+Stock results are not taken on trust. Several candidates are fetched and shown
+to a vision model, which picks the one that actually depicts the dish or
+rejects them all — a wrong photograph on a restaurant's menu is worse than
+none, and "Filter Coffee" returning a pour-over brewing kit is the kind of
+thing a keyword search cannot catch. A rejection simply moves to the next
+provider in the chain.
+
 Providers:
   - "pexels" (default): real licensed photographs, ~instant, free
     (200 req/hour, 20k/month). Needs PEXELS_API_KEY.
@@ -21,6 +28,7 @@ their own dish — that stays the final say on accuracy.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -33,11 +41,27 @@ import urllib.request
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from pydantic import BaseModel, Field
 
 from app.core.config import Settings
+from app.modules.extraction.service import _is_transient
+
+
+class _Pick(BaseModel):
+    """The vision model's verdict on a set of candidate photographs."""
+
+    best_index: int = Field(
+        description="1-based number of the best photograph, or 0 if none fit."
+    )
+    reason: str = Field(description="One short sentence explaining the choice.")
 
 _WIDTH, _HEIGHT = 768, 512
 _UA = "RestoFood/0.1 (Phase 0 pipeline)"
+
+# Kept short: this runs once per dish, so a long backoff on a 40-dish menu
+# would add minutes to a publish for a check that is only an improvement.
+_CHECK_ATTEMPTS = 3
+_CHECK_BACKOFF = 2.0
 
 
 def _prompt(name: str, description: str) -> str:
@@ -123,21 +147,33 @@ def _search_terms(name: str) -> list[str]:
     return list(dict.fromkeys(queries))
 
 
+def _fetch(url: str, timeout: int = 45) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return resp.read()
+
+
 def _pexels(name: str, description: str, settings: Settings, out_path: Path) -> Path:
     """Search Pexels for a real photograph of this dish.
 
     Pexels content is free for commercial use with no attribution required,
     which is what makes it safe to put on a paying restaurant's menu.
+
+    Several candidates are fetched rather than one, because the top stock hit
+    for a regional Indian dish is frequently something else entirely. Which one
+    (if any) actually depicts the dish is decided by `_pick_best`.
     """
     key = settings.pexels_api_key
     if not key:
         raise _NoMatch("no PEXELS_API_KEY set")
 
+    wanted = max(1, settings.image_candidates) if settings.validate_images else 1
+
     for query in _search_terms(name):
         url = (
             "https://api.pexels.com/v1/search?"
             + urllib.parse.urlencode(
-                {"query": query, "per_page": 1, "orientation": "landscape"}
+                {"query": query, "per_page": wanted, "orientation": "landscape"}
             )
         )
         req = urllib.request.Request(
@@ -150,16 +186,21 @@ def _pexels(name: str, description: str, settings: Settings, out_path: Path) -> 
         if not photos:
             continue
 
-        src = photos[0].get("src", {})
+        chosen = _choose(photos, name, description, settings)
+        if chosen is None:
+            # Nothing here depicts the dish. A broader query would only be
+            # vaguer, so stop searching Pexels and let the chain move on to
+            # generating an image instead.
+            raise _NoMatch(f"no Pexels photo matched '{name}'")
+
+        src = chosen.get("src", {})
         # "large" is ~940px wide — plenty for a menu, and small enough to load
         # fast on a phone in a restaurant.
         image_url = src.get("large") or src.get("medium") or src.get("original")
         if not image_url:
             continue
 
-        img_req = urllib.request.Request(image_url, headers={"User-Agent": _UA})
-        with urllib.request.urlopen(img_req, timeout=45) as img_resp:  # noqa: S310
-            raw = img_resp.read()
+        raw = _fetch(image_url)
 
         # Normalise to the same box every other provider writes, so the menu
         # layout doesn't shift depending on where a photo came from.
@@ -170,6 +211,187 @@ def _pexels(name: str, description: str, settings: Settings, out_path: Path) -> 
         return out_path
 
     raise _NoMatch(f"no Pexels result for '{name}'")
+
+
+def _choose(
+    photos: list[dict], name: str, description: str, settings: Settings
+) -> dict | None:
+    """Which of these photos is actually this dish? None if it's none of them.
+
+    Validation is an improvement, not a dependency: if the vision call fails
+    for any reason we fall back to the first result, which is exactly what this
+    code did before the check existed. A broken checker must not stop a
+    restaurant getting its menu online.
+    """
+    if not settings.validate_images or len(photos) == 1:
+        return photos[0]
+
+    try:
+        index = _pick_best(photos, name, description, settings)
+    except Exception as exc:  # noqa: BLE001 — degrade to the old behaviour
+        print(f"    ! image check failed for '{name}', keeping first: {exc}")
+        return photos[0]
+
+    if index is None:
+        print(f"    · rejected all {len(photos)} stock photos for '{name}'")
+        return None
+    if index:
+        print(f"    · picked candidate {index + 1}/{len(photos)} for '{name}'")
+    return photos[index]
+
+
+def _pick_best(
+    photos: list[dict], name: str, description: str, settings: Settings
+) -> int | None:
+    """Show the candidates to a vision model and return the index it picks.
+
+    Thumbnails, not full images: `tiny` is ~280px, which is plenty to tell a
+    biryani from a bowl of noodles, and keeps this to a few hundred KB per
+    dish instead of several MB. They are downloaded once and reused across the
+    whole chain, so escalating to another model costs no extra bandwidth.
+
+    Walks `image_check_chain`, retrying each model while it reports a transient
+    fault. Raises only if every model in the chain fails, which the caller
+    treats as "keep the first result".
+    """
+    thumbs: list[bytes] = []
+    for photo in photos:
+        src = photo.get("src", {})
+        thumb = src.get("tiny") or src.get("small") or src.get("medium")
+        if not thumb:
+            return 0  # a candidate we can't even look at; don't judge the set
+        thumbs.append(_fetch(thumb, timeout=20))
+
+    if not thumbs:
+        return 0
+
+    chain = settings.image_check_chain
+    if not chain:
+        return 0
+
+    dish = f"{name}. {description}".strip().rstrip(".")
+    prompt = _pick_prompt(dish, len(photos))
+
+    last: Exception | None = None
+    for provider, model in chain:
+        for attempt in range(_CHECK_ATTEMPTS):
+            try:
+                return _ask_pick(provider, model, thumbs, prompt, len(photos), settings)
+            except Exception as exc:  # noqa: BLE001 — the next model is the handler
+                last = exc
+                # Vision tiers return 503 in waves; without this the check
+                # quietly does nothing for a whole publish run, which is the
+                # worst outcome — the owner believes their photos were vetted.
+                if _is_transient(exc) and attempt < _CHECK_ATTEMPTS - 1:
+                    time.sleep(_CHECK_BACKOFF * (attempt + 1))
+                    continue
+                break  # permanent, or out of retries: escalate to the next model
+
+    raise RuntimeError(f"all {len(chain)} check models failed: {last}")
+
+
+def _pick_prompt(dish: str, count: int) -> str:
+    return (
+        f'An Indian restaurant is putting "{dish}" on its menu.\n\n'
+        f"Which of the {count} photographs above shows that exact dish, as a "
+        "customer in that restaurant would be served it?\n\n"
+        "Be strict about regional dishes. A name can match in words while the "
+        "photograph shows a different food from a different cuisine — South "
+        "Indian filter coffee is not a pour-over brewing set, and a dish named "
+        "for a place must look like that place's version of it. Judge what is "
+        "in the picture, not what the words could mean.\n\n"
+        "Reject a photograph that shows a different dish, raw ingredients "
+        "instead of a prepared dish, a person, a restaurant interior, or "
+        "anything unrelated. If the dish is vegetarian, reject photographs "
+        "containing meat.\n\n"
+        "Accuracy decides it. Only when two photographs are equally accurate "
+        "should you prefer the clearer, more appetising one.\n\n"
+        "Answer with the photograph's number, or 0 if none of them shows this "
+        "dish. Answering 0 is the right call whenever you are unsure — the "
+        "restaurant would rather have no photograph than a photograph of the "
+        "wrong food."
+    )
+
+
+def _ask_pick(
+    provider: str,
+    model: str,
+    thumbs: list[bytes],
+    prompt: str,
+    count: int,
+    settings: Settings,
+) -> int | None:
+    """One model's verdict. Returns a 0-based index, or None for "none fit"."""
+    if provider == "gemini":
+        pick = _pick_gemini(model, thumbs, prompt, settings)
+    elif provider == "openai":
+        pick = _pick_openai(model, thumbs, prompt, settings)
+    else:
+        raise RuntimeError(f"Unknown image-check provider '{provider}'")
+
+    if pick is None:
+        return 0
+    # The model answers 1..N, or 0 for "none of these".
+    if pick.best_index <= 0 or pick.best_index > count:
+        return None
+    return pick.best_index - 1
+
+
+def _pick_gemini(
+    model: str, thumbs: list[bytes], prompt: str, settings: Settings
+) -> _Pick | None:
+    from google import genai
+    from google.genai import types
+
+    client = genai.Client(api_key=settings.google_api_key)
+
+    parts: list = []
+    for position, raw in enumerate(thumbs, start=1):
+        parts.append(types.Part.from_text(text=f"Photograph {position}:"))
+        parts.append(types.Part.from_bytes(data=raw, mime_type="image/jpeg"))
+    parts.append(types.Part.from_text(text=prompt))
+
+    response = client.models.generate_content(
+        model=model,
+        contents=parts,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=_Pick,
+            # A judgement, not a creative task.
+            temperature=0.0,
+        ),
+    )
+    return response.parsed
+
+
+def _pick_openai(
+    model: str, thumbs: list[bytes], prompt: str, settings: Settings
+) -> _Pick | None:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.openai_api_key)
+
+    content: list[dict] = []
+    for position, raw in enumerate(thumbs, start=1):
+        content.append({"type": "text", "text": f"Photograph {position}:"})
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/jpeg;base64,"
+                    + base64.standard_b64encode(raw).decode("utf-8")
+                },
+            }
+        )
+    content.append({"type": "text", "text": prompt})
+
+    response = client.beta.chat.completions.parse(
+        model=model,
+        messages=[{"role": "user", "content": content}],
+        response_format=_Pick,
+        temperature=0.0,
+    )
+    return response.choices[0].message.parsed
 
 
 def _pollinations(name: str, description: str, settings: Settings, out_path: Path) -> Path:

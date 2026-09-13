@@ -38,6 +38,24 @@ commercial use with no attribution required, which is what makes it safe on a
 paying restaurant's menu. Images pulled from a web search are not, and the
 liability would land on both us and the restaurant.
 
+**Stock results are checked before they're kept.** Five candidates are fetched
+and shown to a vision model, which picks the one that actually depicts the
+dish — or rejects all five, in which case the chain moves on to generating an
+image. A keyword search cannot tell that "Filter Coffee" on an Indian menu
+means a steel tumbler and not a pour-over kit; looking at the photograph can.
+
+The check has its own fallback chain, running the opposite way round to the
+extraction one: it starts on the *lighter* model and escalates, because the
+question is easy and a publish asks it once per dish. Candidate thumbnails are
+downloaded once and reused across the whole chain, so escalating costs no extra
+bandwidth. If every model fails the first result is kept — a broken checker
+must never stop a restaurant getting its menu online.
+
+It is an improvement rather than a cure. On a sample of six dishes it correctly
+rejected an entire set of wrong photographs once, corrected a `Veg Manchurian`
+result that showed the non-vegetarian version, and left already-correct choices
+alone. The owner replacing a photo by hand remains the final word on accuracy.
+
 ---
 
 ## Running it locally
