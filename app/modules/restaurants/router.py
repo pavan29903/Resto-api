@@ -30,6 +30,8 @@ from app.core.db import get_session
 from app.core.storage import StorageClient
 from app.models import MenuItem, MenuSection, Owner, Restaurant
 from app.modules.auth.service import current_owner
+from app.modules.billing import service as billing
+from app.modules.billing.deps import editing_owner
 from app.modules.qr.service import generate_qr, generate_table_tent
 from app.modules.restaurants import service
 from app.modules.restaurants.logo import LogoError, process_dish_photo, process_logo
@@ -101,7 +103,7 @@ async def my_restaurants(
 )
 async def create_restaurant(
     payload: CreateRestaurantIn,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> RestaurantOut:
@@ -166,7 +168,7 @@ async def read_restaurant(
 async def update_restaurant(
     restaurant_id: uuid.UUID,
     payload: UpdateMenuIn,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> RestaurantOut:
@@ -210,7 +212,7 @@ async def update_restaurant(
 async def upload_logo(
     restaurant_id: uuid.UUID,
     file: UploadFile = File(...),
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -238,7 +240,7 @@ async def upload_logo(
 @owner_router.delete("/restaurants/{restaurant_id}/logo", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_logo(
     restaurant_id: uuid.UUID,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> None:
@@ -277,7 +279,7 @@ async def upload_dish_photo(
     restaurant_id: uuid.UUID,
     item_id: uuid.UUID,
     file: UploadFile = File(...),
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -303,7 +305,7 @@ async def upload_dish_photo(
 async def research_dish_photo(
     restaurant_id: uuid.UUID,
     item_id: uuid.UUID,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict:
@@ -340,7 +342,7 @@ async def research_dish_photo(
 async def delete_dish_photo(
     restaurant_id: uuid.UUID,
     item_id: uuid.UUID,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> None:
@@ -367,7 +369,7 @@ async def publish_restaurant(
     restaurant_id: uuid.UUID,
     payload: PublishIn,
     background: BackgroundTasks,
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     restaurant = await service.get_for_owner(session, restaurant_id, owner.id)
@@ -466,6 +468,10 @@ async def public_menu(
         "name": restaurant.name,
         "logo_url": restaurant.logo_url,
         "whatsapp": restaurant.whatsapp,
+        # A bare boolean on purpose. The diner is a stranger; nothing about
+        # the restaurant's billing belongs in a public response, and the page
+        # only needs to know whether to obscure itself.
+        "dimmed": billing.menu_is_dimmed(restaurant.owner),
         "menu": menu.model_dump(mode="json"),
         "images": {
             f"{s_idx}-{i_idx}": item.image_url

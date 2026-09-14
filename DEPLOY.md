@@ -149,21 +149,30 @@ restofood.in
 *.restofood.in      ← this is what gives each restaurant its own address
 ```
 
-Then update the API:
+Then update the API. On **Render**, add these under Settings → Environment
+(on Fly, `fly secrets set` with the same three):
 
-```powershell
-fly secrets set `
-  MENU_DOMAIN="restofood.in" `
-  PUBLIC_BASE_URL="https://restofood.in" `
-  CORS_ORIGINS="https://restofood.in"
+```
+MENU_DOMAIN     = restofood.in
+PUBLIC_BASE_URL = https://restofood.in
+CORS_ORIGINS    = https://restofood.in
 ```
 
 and add `NEXT_PUBLIC_MENU_DOMAIN=restofood.in` in Vercel, so the middleware
 knows which host suffix marks a restaurant subdomain.
 
-`MENU_DOMAIN` also changes what QR codes point at — from
-`/r/<slug>` to `https://<slug>.restofood.in`. **Regenerate any QR codes printed
-before this change.**
+`CORS_ORIGINS` only needs the apex. Once `MENU_DOMAIN` is set, every
+`<slug>.restofood.in` is allowed by the regex in `config.cors_origin_regex`,
+which is why each new restaurant doesn't need a deploy.
+
+`MENU_DOMAIN` also changes what *new* QR codes point at — from `/r/<slug>` to
+`https://<slug>.restofood.in`.
+
+**Codes printed before this change keep working, and do not need reprinting.**
+The subdomain is a rewrite onto the same `/r/<slug>` route, and the middleware
+leaves `/r/` paths alone (`middleware.ts`), so both forms serve the same menu
+indefinitely. The old `*.vercel.app` address also stays attached to the
+project. Nothing a restaurant has already put on its tables goes dead.
 
 ---
 
@@ -183,7 +192,10 @@ before this change.**
 |---|---|
 | Migrations fail on deploy | `DATABASE_URL` wrong or unencoded password |
 | First request takes ~50s | Render free tier cold start — set the `API_URL` variable so the keep-warm workflow runs |
+| Everything 500s after a quiet week | The Supabase project paused. The keep-warm workflow pings a database-backed endpoint to prevent this; check it's still enabled (GitHub disables schedules after 60 days without commits) |
 | Menu loads, console won't sign in | Supabase Site URL still `localhost` |
 | Browser console shows a CORS error | `CORS_ORIGINS` doesn't list the Vercel origin |
 | `getaddrinfo failed` in logs | Using the IPv6-only direct DB host instead of the pooler |
-| QR codes point at localhost | `PUBLIC_BASE_URL` not set on Fly |
+| QR codes point at localhost | `PUBLIC_BASE_URL` not set on the API host |
+| `<slug>.restofood.in` shows the landing page | `NEXT_PUBLIC_MENU_DOMAIN` not set in Vercel — the middleware can't tell a restaurant subdomain from any other host |
+| Subdomain gives a certificate warning | The wildcard cert is still issuing, or the domain isn't on Vercel's nameservers |

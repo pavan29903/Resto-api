@@ -63,7 +63,12 @@ async def get_by_slug(
     stmt = (
         select(Restaurant)
         .where(Restaurant.slug == slug)
-        .options(selectinload(Restaurant.sections).selectinload(MenuSection.items))
+        .options(
+            selectinload(Restaurant.sections).selectinload(MenuSection.items),
+            # Eager, because the public route reads the owner's billing dates
+            # and a lazy load there would raise MissingGreenlet on async.
+            selectinload(Restaurant.owner),
+        )
     )
     if published_only:
         stmt = stmt.where(Restaurant.is_published.is_(True))

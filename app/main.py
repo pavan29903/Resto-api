@@ -21,6 +21,8 @@ from starlette.concurrency import run_in_threadpool
 from app.core.config import Settings, get_settings
 from app.models import Owner
 from app.modules.auth.service import current_owner
+from app.modules.billing.deps import editing_owner
+from app.modules.billing.router import router as billing_router
 from app.modules.extraction.service import MEDIA_TYPES, ProviderBusy, extract_menu
 from app.modules.restaurants.router import owner_router, public_router
 
@@ -44,6 +46,7 @@ app.add_middleware(
 
 app.include_router(owner_router)
 app.include_router(public_router)
+app.include_router(billing_router)
 
 
 @app.get("/api/config")
@@ -68,7 +71,7 @@ def read_config(settings: Settings = Depends(get_settings)) -> dict:
 @app.post("/api/extract")
 async def api_extract(
     files: list[UploadFile] = File(...),
-    owner: Owner = Depends(current_owner),
+    owner: Owner = Depends(editing_owner),
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Menu photo(s) -> structured menu.

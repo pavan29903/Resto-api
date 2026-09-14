@@ -29,6 +29,22 @@ class Owner(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(320), index=True)
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    # Billing is two dates and nothing else. A stored status column would need
+    # a job to keep it true and would be wrong the moment that job failed;
+    # these two are facts, and the status is derived from them on read.
+    #
+    # Nullable because owners created before billing existed have neither, and
+    # `subscription_status` treats that as "never started" rather than
+    # "expired" — nobody gets locked out by a migration.
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Set by hand today, by a payment webhook later. Either way it is the only
+    # thing that says someone has paid.
+    paid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     restaurants: Mapped[list["Restaurant"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )

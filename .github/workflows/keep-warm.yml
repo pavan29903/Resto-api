@@ -1,16 +1,29 @@
-# Keeps a free-tier backend awake.
+# Keeps the free-tier backend AND its database awake.
 #
-# Render's free plan spins a service down after 15 minutes of inactivity, and
-# the next request then waits 30-60 seconds. That's fine for an API nobody is
-# using, but a diner scanning a QR code at a table will give up long before it
-# answers — so we poke it every 10 minutes.
+# Two separate things go to sleep on the free stack, and they need different
+# pokes:
 #
-# Delete this workflow if you move to a paid plan or to Fly.io, where the
-# machine stays warm on its own.
+#   Render  spins the service down after 15 minutes idle; the next request
+#           then waits 30-60 seconds. A diner scanning a QR code at a table
+#           gives up long before that.
+#
+#   Supabase pauses a project after 7 days with no DATABASE activity. A paused
+#           project takes a manual click in the dashboard to restore, so a
+#           quiet week would take every live menu offline.
+#
+# `/health` returns a static {"ok": true} and never touches Postgres, so it
+# wakes Render but does nothing for Supabase. The second request runs a real
+# query — that is the one keeping the database counted as active.
+#
+# Delete this workflow if you move to paid plans, where neither sleeps.
 #
 # NOTE: GitHub's scheduled runs are best-effort and can be delayed by 5-15
 # minutes under load, so this reduces cold starts rather than eliminating them.
 # For a guaranteed interval use an external pinger such as cron-job.org.
+#
+# NOTE: GitHub disables scheduled workflows in a repository with no commits for
+# 60 days. If this repo ever goes quiet for two months, re-enable it under the
+# Actions tab — otherwise the database quietly stops being pinged.
 
 name: Keep the API warm
 
@@ -23,18 +36,29 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping health endpoint
+      - name: Wake the API and touch the database
         env:
           # Set this under Settings -> Secrets and variables -> Actions -> Variables
-          # e.g. https://restofood-api.onrender.com
+          # e.g. https://resto-api-jjs1.onrender.com
           API_URL: ${{ vars.API_URL }}
         run: |
           if [ -z "$API_URL" ]; then
             echo "API_URL variable is not set — nothing to ping."
             exit 0
           fi
+
           # A cold start can take a minute, so allow for it rather than
           # reporting a false failure.
-          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$API_URL/health" || echo "000")
-          echo "$API_URL/health -> $code"
-          [ "$code" = "200" ]
+          health=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$API_URL/health" || echo "000")
+          echo "$API_URL/health -> $health"
+
+          # Any valid, unreserved slug reaches the database. A reserved or
+          # malformed one short-circuits before the query and would keep
+          # Supabase asleep while still returning 200.
+          db=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 \
+            "$API_URL/api/public/slug-available/keep-warm" || echo "000")
+          echo "$API_URL/api/public/slug-available/keep-warm -> $db"
+
+          # Fail loudly if either is down: a silent green tick on a workflow
+          # that has stopped keeping anything warm is worse than no workflow.
+          [ "$health" = "200" ] && [ "$db" = "200" ]

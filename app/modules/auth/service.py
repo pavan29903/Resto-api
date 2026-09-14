@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.db import get_session
 from app.models import Owner
+from app.modules.billing import service as billing
 
 _jwks_client: PyJWKClient | None = None
 
@@ -105,7 +106,14 @@ async def current_owner(
     ).scalar_one_or_none()
 
     if owner is None:
-        owner = Owner(auth_user_id=user.id, email=user.email)
+        # The free month starts the first time they sign in, not when they
+        # publish — otherwise someone who signs up and stalls has an unbounded
+        # trial, and the clock in the console has nothing to count down to.
+        owner = Owner(
+            auth_user_id=user.id,
+            email=user.email,
+            trial_ends_at=billing.trial_end_from(),
+        )
         session.add(owner)
         await session.flush()
     elif user.email and owner.email != user.email:

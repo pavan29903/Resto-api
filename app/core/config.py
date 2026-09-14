@@ -158,6 +158,11 @@ class Settings(BaseSettings):
     # always permitted; anything else must be listed here.
     cors_origins: str = ""
 
+    # Guards the two endpoints meant for you rather than for customers
+    # (marking someone paid, listing expiring trials). Unset disables them
+    # entirely and they answer 404 — an empty secret must never mean "open".
+    admin_token: str | None = None
+
     @property
     def allowed_origins(self) -> list[str]:
         # 3000 is Next's default; 5005 is ours, for when 3000 is taken by
