@@ -1,208 +1,129 @@
-# RestoFood — API
+# RestoFood
 
-Turns a photograph of a paper menu card into a menu people can read on their
-phones.
+**Photograph your menu card. Get a menu your customers open by scanning a code
+on the table — with a photograph of every dish.**
 
-A restaurant owner uploads a photo of the card they already have. A vision
-model reads it into structured data, the owner corrects anything wrong, a
-photograph is found for every dish, and the result is published at the
-restaurant's own web address with a QR code for the tables.
-
-FastAPI, Postgres, deployed on Render. The web app is a separate repository:
-**[Resto-ui](https://github.com/pavan29903/Resto-ui)**.
+Live at **[restofood.in](https://restofood.in)** · Web app:
+**[Resto-ui](https://github.com/pavan29903/Resto-ui)**
 
 ---
 
-## What happens when a menu is published
+## The problem
+
+India has millions of small restaurants and cafes still handing out laminated
+paper menu cards. Every time a price moves, the owner reprints the batch —
+₹3,000–5,000, a few times a year. Meanwhile the cafe two doors down has a QR
+code on every table, photographs of every dish, and looks like a different
+class of business.
+
+The tools that close that gap assume a marketing budget, a photographer, and
+somebody who can operate a CMS. A twelve-table cafe has none of those.
+
+**RestoFood needs one thing: a photograph of the menu card they already own.**
+
+## What it does
 
 ```
-menu photo
-   │
-   ├─ vision model reads it into sections, dishes, prices, veg marks
-   │
-   ├─ owner reviews and corrects            ← nothing is published unreviewed
-   │
-   ├─ a photograph is found for each dish   ← Pexels, then AI, then a plain card
-   │
-   └─ stored, and served at <slug>.restofood.in with a printable QR code
+   a photo of the menu card
+            │
+            ├─  a vision model reads it into dishes, prices, sections, veg marks
+            │
+            ├─  the owner checks it — nothing goes live unreviewed
+            │
+            ├─  a real photograph is found for every dish, and AI-checked
+            │   against what the dish actually is
+            │
+            └─  published at  spicegarden.restofood.in  with a printable
+                QR code for the tables
 ```
 
-Two decisions in there are worth stating plainly.
+About five minutes, start to finish. The owner needs no photographer, no
+designer, and no idea what a domain is.
 
-**The review step is mandatory.** Extraction is good but not perfect, and a
-restaurant will not tolerate a wrong price on a customer's screen. The owner
-sees every dish before anything goes live.
+## Who it's for
 
-**Dish photographs are licensed, not scraped.** Pexels content is free for
-commercial use with no attribution required, which is what makes it safe on a
-paying restaurant's menu. Images pulled from a web search are not, and the
-liability would land on both us and the restaurant.
+Independent restaurants, cafes and cloud kitchens with one to five outlets —
+the ones for whom Zomato is a commission line and a website is a project they
+never started. The buyer is the owner, usually on a mid-range Android phone,
+usually between services.
 
-**Stock results are checked before they're kept.** Five candidates are fetched
-and shown to a vision model, which picks the one that actually depicts the
-dish — or rejects all five, in which case the chain moves on to generating an
-image. A keyword search cannot tell that "Filter Coffee" on an Indian menu
-means a steel tumbler and not a pour-over kit; looking at the photograph can.
-
-The check has its own fallback chain, running the opposite way round to the
-extraction one: it starts on the *lighter* model and escalates, because the
-question is easy and a publish asks it once per dish. Candidate thumbnails are
-downloaded once and reused across the whole chain, so escalating costs no extra
-bandwidth. If every model fails the first result is kept — a broken checker
-must never stop a restaurant getting its menu online.
-
-It is an improvement rather than a cure. On a sample of six dishes it correctly
-rejected an entire set of wrong photographs once, corrected a `Veg Manchurian`
-result that showed the non-vegetarian version, and left already-correct choices
-alone. The owner replacing a photo by hand remains the final word on accuracy.
+Everything is built for that person: the console explains itself, the diner's
+menu is readable one-handed in a dim room, and the whole product speaks in
+plain sentences rather than software vocabulary.
 
 ---
 
-## Running it locally
+## What's interesting underneath
 
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+This is a small product that takes its hard parts seriously.
 
-```bash
-uv sync --extra gemini
-cp .env.example .env                 # PowerShell: Copy-Item .env.example .env
-uv run uvicorn app.main:app --reload --port 8222
-```
+**Structured extraction, not OCR.** A vision model returns a validated Pydantic
+schema — sections, dishes, prices, veg/non-veg marks, currency detected from
+the symbols — so the output is usable data rather than text somebody has to
+clean up. Reading a whole 40-dish menu costs about **₹1**.
 
-Interactive API documentation is then at <http://localhost:8222/docs>.
+**A model chain that degrades instead of failing.** Free vision tiers return
+`503 — experiencing high demand` in waves. Extraction retries transient faults
+with jittered backoff, then falls through to a second model, then to OpenAI if
+a key exists — while a permanent error like a bad file is *not* retried, since
+it would fail identically every time. An overloaded provider returns **503, not
+500**, because "try again in a moment" and "we are broken" are different
+things to everyone downstream.
 
-### What you need in `.env`
+**AI that checks its own output.** Stock libraries are thin on regional Indian
+food — searching "Filter Coffee" returns pour-over brewing kits, which is not
+what a South Indian cafe serves. So five candidates are fetched and shown to a
+vision model, which picks the one that actually depicts the dish **or rejects
+all five**, falling through to image generation. On a six-dish sample it
+correctly threw away an entire set of wrong photographs and caught a
+*Veg* Manchurian result that showed the chicken version.
 
-Only two keys, and both are free:
+**Multi-tenant by subdomain.** Every restaurant answers on its own address —
+`spicegarden.restofood.in` — served by one Next.js app through a middleware
+rewrite, behind a wildcard TLS certificate. Onboarding a restaurant requires no
+deploy and no DNS change: the API's CORS policy matches the whole wildcard, and
+about thirty reserved subdomains can never be claimed.
 
-| Key | Where | Free tier |
-|---|---|---|
-| `GOOGLE_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | 1,500 requests/day |
-| `PEXELS_API_KEY` | [pexels.com/api](https://www.pexels.com/api/) | 20,000 images/month |
+**Money without a payment gateway.** Billing is two dates on a row and a status
+derived on read — no status column to drift out of sync when a job fails. A
+lapsed restaurant loses the *editor* first and its public menu only three weeks
+later, because taking a live restaurant offline mid-service is a catastrophe
+you caused, not a payment reminder.
 
-Plus a [Supabase](https://supabase.com) project for the database, auth and
-image storage. Copy `DATABASE_URL` from **Settings → Database → Connection
-string**, and the keys from **Settings → API**.
+**Economics that work at ₹250/month.** Onboarding one restaurant costs roughly
+**two paise**. Menus are read once, photographs are found once, and everything
+after that is static. That is what makes a price a twelve-table cafe will
+actually pay possible at all.
 
-> Use the **session pooler** connection string, not `db.<ref>.supabase.co` —
-> the direct host is IPv6-only and unreachable from most networks. And
-> percent-encode special characters in the password: `pass@word` becomes
-> `pass%40word`.
-
-```bash
-uv run alembic upgrade head          # create the tables
-```
-
-### Costs, in practice
-
-Onboarding one restaurant costs about **two paise** — a fraction of a cent —
-and nothing after that. Menus are read once; photographs are found once.
-
-| | Provider | Per restaurant |
-|---|---|---|
-| Reading the menu | Gemini Flash | ~₹1 |
-| Dish photographs | Pexels | free |
-| Everything after | — | nothing |
-
-Both can be swapped for stronger paid models (`claude-opus-4-8` for reading,
-FLUX via fal.ai for images) by changing two lines in `.env`.
-
-### When the vision model is busy
-
-Free vision tiers return `503 — this model is currently experiencing high
-demand` often enough that a single attempt makes the product look broken. This
-is the one step an owner cannot route around, so it gets three defences:
-
-1. **Retry** the same model up to three times with backoff and jitter — but
-   only on transient faults. A bad key or an unreadable file fails identically
-   every time, so retrying it just makes the owner wait longer for the same
-   answer.
-2. **Fall through** to the next provider in `EXTRACTION_FALLBACKS`. The first
-   fallback is a *second Gemini model*, because a 503 is usually per-model
-   capacity — the cheapest escape is a sibling model on the key you already
-   have. OpenAI comes after that and stays dormant until `OPENAI_API_KEY` is
-   set.
-3. **Answer 503, not 500.** Nothing is broken and the next attempt will
-   probably work; the owner is told exactly that, and the provider's raw error
-   goes to the log rather than to their screen.
-
-`GET /api/config` reports `extraction_chain` — the providers that would
-actually be tried, with unkeyed ones already filtered out.
+**Verified, not assumed.** `scripts/verify_deploy.py` checks a live deployment
+end to end — CORS in both directions, forged-JWT rejection, whether QR codes
+encode a real address rather than `localhost`, whether dish photographs are
+publicly readable. It exits non-zero, so it can gate a deploy.
 
 ---
 
-## How it's put together
+## Built with
 
-```
-app/
-  main.py                 the app: CORS, extraction, health
-  core/
-    config.py             settings, and the rules for a menu's public URL
-    db.py                 async engine and per-request session
-    storage.py            Supabase Storage — dish photographs and logos
-  models/                 owners · restaurants · sections · dishes
-  modules/
-    auth/                 verifies a Supabase session against its public keys
-    extraction/           photo → structured menu
-    images/               finding a photograph for a dish
-    restaurants/          the owner's API, publishing, logos, per-dish photos
-    qr/                   QR codes and the printable table card
-  schemas/menu.py         the shape the vision model must return
-alembic/                  migrations
-```
+FastAPI · SQLAlchemy 2.0 (async) · Postgres · Alembic · Gemini vision ·
+Pexels · Supabase (auth, storage) · Docker · Render
 
-Domain modules are kept separate on purpose. If one needs to scale on its own
-later — image generation is the likely first — it can move out to its own
-service without a rewrite.
+Two repositories, deliberately: the API and the web app deploy independently,
+and the domain modules inside this one are separated so image generation can
+move to its own service when it needs to, without a rewrite.
 
-### The endpoints
+## Built, and not yet built
 
-| | |
-|---|---|
-| `POST /api/extract` | photo → structured menu *(signed in)* |
-| `GET&nbsp;/api/me/restaurants` | the owner's menus |
-| `POST /api/restaurants` | create one from a reviewed menu |
-| `PATCH /api/restaurants/{id}` | name, address, WhatsApp, dishes |
-| `POST /api/restaurants/{id}/publish` | find photographs, go live |
-| `POST /api/restaurants/{id}/logo` | the restaurant's logo |
-| `POST /api/restaurants/{id}/items/{id}/photo` | replace one dish's photograph |
-| `GET&nbsp;/api/restaurants/{id}/qr.png` | QR code, or `?tent=true` for the table card |
-| `GET&nbsp;/api/public/menus/{slug}` | what a diner sees — no auth, by design |
+**Working today:** menu extraction and review, dish photographs with AI
+vetting, per-dish replacement, logos, publishing, QR codes and printable table
+cards, subdomain-per-restaurant, owner accounts, trials and renewals, a back
+office for collecting payment.
 
-Owner routes are scoped to the signed-in owner, so one restaurant can never
-read or change another's menu.
+**Not built:** ordering. A diner reads the menu and then speaks to a server.
+There is no cart and no kitchen screen — that is the next substantial piece of
+work, and it is not claimed as "coming soon" on a page where somebody might
+believe it.
 
 ---
 
-## A few things that will bite you
-
-**Photographs the owner chose are never overwritten.** Each dish records where
-its photograph came from — `pexels`, `ai`, or `owner` — and re-publishing skips
-anything marked `owner`.
-
-**Renaming a dish keeps its photograph.** Menus are rewritten wholesale on
-save, so images are re-matched by name first and position second. Renaming
-survives; reordering survives; doing both to the same dish in one save does
-not.
-
-**Some subdomains are reserved.** `api`, `www`, `admin` and about twenty-five
-others can never become a restaurant's address, or they would shadow our own
-hosts. The list lives in `modules/restaurants/service.py` and is mirrored in
-the web app's middleware — change both together.
-
-**Nothing is written to local disk.** A deployed container's filesystem is
-temporary, so photographs go to object storage and menus to Postgres.
-
----
-
-## Deploying
-
-See **[DEPLOY.md](DEPLOY.md)** — Render (free) or Fly.io (Mumbai, no cold
-start), with the frontend on Vercel. Neither needs Docker installed locally.
-
----
-
-## Not built yet
-
-Ordering. This serves menus; it does not take orders. There is no orders table
-and no live connection to a kitchen screen, so a diner reads the menu and then
-speaks to a server. That is the next substantial piece of work.
+**Running it locally:** [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) ·
+**Deploying it:** [DEPLOY.md](DEPLOY.md)
