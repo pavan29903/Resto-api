@@ -24,7 +24,7 @@ from app.core.config import Settings, get_settings
 from app.core.db import get_sessionmaker
 from app.core.storage import StorageClient
 from app.models import MenuItem, MenuSection, Restaurant
-from app.modules.images.service import generate_image
+from app.modules.images.service import DISH_EXT, generate_image
 
 
 @dataclass
@@ -107,11 +107,11 @@ async def run_publish(
                 with tempfile.TemporaryDirectory(prefix="restofood_") as tmp:
                     tmp_dir = Path(tmp)
                     for item in targets:
-                        local = tmp_dir / f"{item.id}.png"
+                        local = tmp_dir / f"{item.id}{DISH_EXT}"
                         try:
                             generate_image(item.name, item.description or "", settings, local)
                             url = storage.upload(
-                                f"{restaurant.id}/{item.id}.png", local.read_bytes()
+                                f"{restaurant.id}/{item.id}{DISH_EXT}", local.read_bytes()
                             )
                             item.image_url = url
                             item.image_source = settings.image_provider

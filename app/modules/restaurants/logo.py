@@ -103,5 +103,9 @@ def process_dish_photo(raw: bytes) -> bytes:
         img = ImageOps.exif_transpose(img).convert("RGB")
         img = ImageOps.fit(img, (DISH_W, DISH_H), method=Image.LANCZOS)
         out = io.BytesIO()
-        img.save(out, format="PNG", optimize=True)
+        # WebP for the same reason as the automatic photographs: a dish photo
+        # is a photograph, and PNG costs about twelve times the bytes for no
+        # visible gain. The logo above stays PNG — it is one small file per
+        # restaurant and may carry transparency.
+        img.save(out, format="WEBP", quality=82, method=6)
         return out.getvalue()

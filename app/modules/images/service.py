@@ -58,6 +58,15 @@ class _Pick(BaseModel):
 _WIDTH, _HEIGHT = 768, 512
 _UA = "RestoFood/0.1 (Phase 0 pipeline)"
 
+# WebP, not PNG. These are photographs, and PNG is a lossless format meant for
+# line art — the same dish image measures ~420 KB as PNG and ~35 KB as WebP at
+# quality 82, with no visible difference on a phone. Twelve times the bytes,
+# for every dish, on every scan, straight out of the free tier's egress
+# allowance and straight into the wait of a hungry person on café wifi.
+DISH_FORMAT = "WEBP"
+DISH_EXT = ".webp"
+DISH_QUALITY = 82
+
 # Kept short: this runs once per dish, so a long backoff on a 40-dish menu
 # would add minutes to a publish for a check that is only an improvement.
 _CHECK_ATTEMPTS = 3
@@ -105,14 +114,28 @@ def generate_image(name: str, description: str, settings: Settings, out_path: Pa
 
     for provider in chain:
         try:
-            return _run_provider(provider, name, description, settings, out_path)
+            _run_provider(provider, name, description, settings, out_path)
+            # Every provider hands back something different — Pexels a JPEG,
+            # Pollinations a PNG, the paid ones whatever they feel like. One
+            # normalisation step here means the rest of the system can assume
+            # a single size and format, instead of each provider having to
+            # remember to produce one.
+            return _normalise(out_path)
         except _NoMatch:
             continue  # expected: stock search found nothing usable
         except Exception as exc:
             print(f"    ! {provider} failed for '{name}': {exc}")
             continue
 
-    return _placeholder(name, out_path)
+    return _normalise(_placeholder(name, out_path))
+
+
+def _normalise(path: Path) -> Path:
+    """Crop to the standard box and re-encode as WebP, in place."""
+    with Image.open(path) as im:
+        fitted = ImageOps.fit(im.convert("RGB"), (_WIDTH, _HEIGHT), method=Image.LANCZOS)
+    fitted.save(path, format=DISH_FORMAT, quality=DISH_QUALITY, method=6)
+    return path
 
 
 class _NoMatch(Exception):
@@ -200,14 +223,9 @@ def _pexels(name: str, description: str, settings: Settings, out_path: Path) -> 
         if not image_url:
             continue
 
-        raw = _fetch(image_url)
-
-        # Normalise to the same box every other provider writes, so the menu
-        # layout doesn't shift depending on where a photo came from.
-        with Image.open(io.BytesIO(raw)) as im:
-            im = im.convert("RGB")
-            im = ImageOps.fit(im, (_WIDTH, _HEIGHT), method=Image.LANCZOS)
-            im.save(out_path, format="PNG")
+        # Written as-is; `_normalise` in generate_image does the cropping and
+        # the re-encoding, so this only happens once rather than twice.
+        out_path.write_bytes(_fetch(image_url))
         return out_path
 
     raise _NoMatch(f"no Pexels result for '{name}'")

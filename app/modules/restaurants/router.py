@@ -35,7 +35,7 @@ from app.modules.billing.deps import editing_owner
 from app.modules.qr.service import generate_qr, generate_table_tent
 from app.modules.restaurants import service
 from app.modules.restaurants.logo import LogoError, process_dish_photo, process_logo
-from app.modules.images.service import generate_image
+from app.modules.images.service import DISH_EXT, generate_image
 from app.modules.restaurants.publish import JOBS, PublishJob, run_publish
 from app.schemas.menu import Menu
 
@@ -292,7 +292,7 @@ async def upload_dish_photo(
 
     storage = StorageClient.from_settings(settings)
     storage.ensure_bucket()
-    url = storage.upload(f"{restaurant_id}/{item.id}.png", png)
+    url = storage.upload(f"{restaurant_id}/{item.id}{DISH_EXT}", png)
     # Cache-bust, or the CDN keeps serving the photo they just replaced.
     item.image_url = f"{url}?v={uuid.uuid4().hex[:8]}"
     # "owner" is the mark that stops a re-publish overwriting this.
@@ -320,14 +320,14 @@ async def research_dish_photo(
     storage = StorageClient.from_settings(settings)
     storage.ensure_bucket()
     with tempfile.TemporaryDirectory(prefix="restofood_dish_") as tmp:
-        local = Path(tmp) / "dish.png"
+        local = Path(tmp) / f"dish{DISH_EXT}"
         try:
             generate_image(item.name, item.description or "", settings, local)
         except Exception as exc:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY, f"Couldn't find a photo: {exc}"
             ) from exc
-        url = storage.upload(f"{restaurant_id}/{item.id}.png", local.read_bytes())
+        url = storage.upload(f"{restaurant_id}/{item.id}{DISH_EXT}", local.read_bytes())
 
     item.image_url = f"{url}?v={uuid.uuid4().hex[:8]}"
     item.image_source = settings.image_provider
@@ -351,9 +351,13 @@ async def delete_dish_photo(
     item.image_source = None
     await session.flush()
     try:
-        StorageClient.from_settings(settings).remove_prefix(
-            f"{restaurant_id}/{item.id}.png"
-        )
+        storage = StorageClient.from_settings(settings)
+        # Both extensions: dish photos were PNG before, and a menu published
+        # then still has .png objects sitting in storage. Deleting only the
+        # current format would quietly leak them, and nothing would ever
+        # collect them — the database row that named them is gone.
+        for ext in (DISH_EXT, ".png"):
+            storage.remove_prefix(f"{restaurant_id}/{item.id}{ext}")
     except Exception as exc:
         print(f"  ! could not delete dish photo: {exc}")
 
