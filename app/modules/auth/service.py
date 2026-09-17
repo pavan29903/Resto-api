@@ -105,6 +105,25 @@ async def current_owner(
         await session.execute(select(Owner).where(Owner.auth_user_id == user.id))
     ).scalar_one_or_none()
 
+    if owner is None and user.email:
+        # A restaurant built for them before they signed up. Claiming it by
+        # email is safe because Supabase has already verified that address —
+        # whoever signs in with it demonstrably controls that inbox. Only rows
+        # with no auth id can be claimed, so this can never take over an
+        # account that someone is already using.
+        placeholder = (
+            await session.execute(
+                select(Owner).where(
+                    Owner.email == user.email,
+                    Owner.auth_user_id.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if placeholder is not None:
+            placeholder.auth_user_id = user.id
+            await session.flush()
+            return placeholder
+
     if owner is None:
         # The free month starts the first time they sign in, not when they
         # publish — otherwise someone who signs up and stalls has an unbounded

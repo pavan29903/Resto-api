@@ -25,9 +25,26 @@ class Owner(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # The `sub` claim from the Supabase JWT. Unique, and how we look owners up.
-    auth_user_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    #
+    # Nullable, because a restaurant can be built for someone before they have
+    # an account: you sit in their cafe, photograph the menu, hand it over to
+    # their email address, and they sign up that evening. Until they do, this
+    # row is a placeholder holding their menu, and `current_owner` claims it
+    # the first time somebody signs in with that verified email.
+    auth_user_id: Mapped[str | None] = mapped_column(
+        String(128), unique=True, index=True, nullable=True
+    )
     email: Mapped[str] = mapped_column(String(320), index=True)
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    # How you reach them about money. Separate from Restaurant.whatsapp, which
+    # is the number printed on the menu for diners — an owner may well not want
+    # their personal number shown to every customer who scans a code.
+    #
+    # Digits only, with the country code and no "+", because that is the shape
+    # wa.me wants and converting on every render is a good way to get it wrong
+    # once and never notice.
+    phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Billing is two dates and nothing else. A stored status column would need
     # a job to keep it true and would be wrong the moment that job failed;
