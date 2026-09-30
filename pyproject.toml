@@ -30,6 +30,7 @@ dependencies = [
 fal = ["fal-client>=0.5"]
 gemini = ["google-genai>=0.3"]
 openai = ["openai>=1.50"]
+r2 = ["boto3>=1.34"]
 replicate = ["replicate>=0.34"]
 
 # Phase 0 is an application (a runnable pipeline), not a library to build/publish.

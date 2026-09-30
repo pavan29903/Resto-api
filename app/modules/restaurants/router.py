@@ -1,4 +1,4 @@
-"""Restaurant endpoints.
+﻿"""Restaurant endpoints.
 
 Owner routes require a Supabase session and are scoped to that owner.
 Public routes serve one thing: the menu a diner sees after scanning the QR.
@@ -27,7 +27,7 @@ from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_session
-from app.core.storage import StorageClient
+from app.core.storage import storage_for
 from app.models import MenuItem, MenuSection, Owner, Restaurant
 from app.modules.auth.service import current_owner
 from app.modules.billing import service as billing
@@ -226,7 +226,7 @@ async def upload_logo(
     except LogoError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    storage = StorageClient.from_settings(settings)
+    storage = storage_for(settings)
     storage.ensure_bucket()
     # A stable path per restaurant, cache-busted so a replaced logo shows up
     # immediately instead of sitting behind the CDN's copy of the old one.
@@ -250,7 +250,7 @@ async def remove_logo(
     restaurant.logo_url = None
     await session.flush()
     try:
-        StorageClient.from_settings(settings).remove_prefix(f"{restaurant.id}/logo.png")
+        storage_for(settings).remove_prefix(f"{restaurant.id}/logo.png")
     except Exception as exc:
         print(f"  ! could not delete logo file: {exc}")
 
@@ -290,7 +290,7 @@ async def upload_dish_photo(
     except LogoError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
 
-    storage = StorageClient.from_settings(settings)
+    storage = storage_for(settings)
     storage.ensure_bucket()
     url = storage.upload(f"{restaurant_id}/{item.id}{DISH_EXT}", png)
     # Cache-bust, or the CDN keeps serving the photo they just replaced.
@@ -311,13 +311,13 @@ async def research_dish_photo(
 ) -> dict:
     """Find a different stock photo for one dish.
 
-    Useful when the automatic match is wrong — a search for a regional dish
+    Useful when the automatic match is wrong â€” a search for a regional dish
     can land on something generic, and the owner shouldn't have to go find
     their own photo to fix it.
     """
     item = await _owned_item(session, restaurant_id, item_id, owner.id)
 
-    storage = StorageClient.from_settings(settings)
+    storage = storage_for(settings)
     storage.ensure_bucket()
     with tempfile.TemporaryDirectory(prefix="restofood_dish_") as tmp:
         local = Path(tmp) / f"dish{DISH_EXT}"
@@ -351,11 +351,11 @@ async def delete_dish_photo(
     item.image_source = None
     await session.flush()
     try:
-        storage = StorageClient.from_settings(settings)
+        storage = storage_for(settings)
         # Both extensions: dish photos were PNG before, and a menu published
         # then still has .png objects sitting in storage. Deleting only the
         # current format would quietly leak them, and nothing would ever
-        # collect them — the database row that named them is gone.
+        # collect them â€” the database row that named them is gone.
         for ext in (DISH_EXT, ".png"):
             storage.remove_prefix(f"{restaurant_id}/{item.id}{ext}")
     except Exception as exc:
@@ -411,7 +411,7 @@ async def restaurant_qr(
 ) -> Response:
     """QR code, or the printable table card when ?tent=true.
 
-    Generated on demand rather than stored — it's cheap, and it always
+    Generated on demand rather than stored â€” it's cheap, and it always
     reflects the restaurant's current web address.
     """
     restaurant = await service.get_for_owner(session, restaurant_id, owner.id)
@@ -447,7 +447,7 @@ async def delete_restaurant(
 
     # Drop the dish photos too, or deleted menus quietly consume storage forever.
     try:
-        StorageClient.from_settings(get_settings()).remove_prefix(str(restaurant.id))
+        storage_for(get_settings()).remove_prefix(str(restaurant.id))
     except Exception as exc:  # never block the delete on a storage hiccup
         print(f"  ! could not clear images for {restaurant.slug}: {exc}")
 

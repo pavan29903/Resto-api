@@ -128,6 +128,28 @@ class Settings(BaseSettings):
     # EXTRACTION_FALLBACKS. Unkeyed providers are skipped.
     image_check_fallbacks: str = "gemini:gemini-flash-latest,openai:gpt-4o-mini"
 
+    # Where dish photographs and logos live: "supabase" or "r2".
+    #
+    # Supabase is the simplest — one account for database, auth and files — but
+    # its free tier allows 5 GB of egress a month, and every diner who scans a
+    # code downloads the photographs again. Cloudflare R2 charges nothing for
+    # egress at all, which removes that ceiling rather than raising it.
+    #
+    # The database still lives on Supabase either way. This setting only moves
+    # the files, which are the part that scales with diners rather than with
+    # restaurants.
+    storage_provider: str = "supabase"
+
+    r2_account_id: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str = "dish-images"
+    # The public read URL for the bucket: either the r2.dev address Cloudflare
+    # gives you, or a custom domain like https://img.restofood.in. Required,
+    # because R2 buckets are private by default and the endpoint used to write
+    # is not the one diners read from.
+    r2_public_base_url: str | None = None
+
     # Dish images. Default is "pexels": real, properly-licensed food photographs
     # searched by dish name. A real photo of the actual dish beats an AI guess,
     # so we try stock first and only generate when there's no match.

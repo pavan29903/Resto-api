@@ -176,6 +176,36 @@ project. Nothing a restaurant has already put on its tables goes dead.
 
 ---
 
+## Moving images to Cloudflare R2
+
+Supabase's free tier allows 5 GB of egress a month, and every diner who scans a
+code downloads the dish photographs again — one busy cafe can exceed that on
+its own. R2 charges **nothing** for egress, so moving the files there removes
+the ceiling instead of raising it. The database and auth stay on Supabase.
+
+1. Cloudflare dashboard → **R2** → create a bucket, e.g. `dish-images`
+2. On the bucket → **Settings** → **Public access**: enable the `r2.dev`
+   subdomain, or attach a custom domain like `img.restofood.in`. Buckets are
+   private until you do; the code cannot make them public.
+3. **R2 → Manage API tokens** → create a token with *Object Read & Write*
+4. Set on the API:
+
+```
+STORAGE_PROVIDER      = r2
+R2_ACCOUNT_ID         = <from the R2 overview page>
+R2_ACCESS_KEY_ID      = <from the API token>
+R2_SECRET_ACCESS_KEY  = <from the API token>
+R2_BUCKET             = dish-images
+R2_PUBLIC_BASE_URL    = https://img.restofood.in
+```
+
+Switching is safe and reversible. Images already in Supabase keep their
+absolute URLs and carry on serving; only new uploads go to R2. Set
+`STORAGE_PROVIDER` back to `supabase` and the same is true in reverse.
+
+To move the old images across, republish those menus — photographs are found
+again and written to the new bucket.
+
 ## Costs
 
 | | |

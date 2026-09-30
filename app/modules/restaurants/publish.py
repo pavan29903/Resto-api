@@ -1,4 +1,4 @@
-"""Publishing a menu.
+﻿"""Publishing a menu.
 
 Finds a photo for every dish, uploads it to object storage, records the URL on
 the dish, and marks the restaurant live. Runs as a background job because
@@ -22,7 +22,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.config import Settings, get_settings
 from app.core.db import get_sessionmaker
-from app.core.storage import StorageClient
+from app.core.storage import storage_for
 from app.models import MenuItem, MenuSection, Restaurant
 from app.modules.images.service import DISH_EXT, generate_image
 
@@ -101,7 +101,7 @@ async def run_publish(
 
             if targets:
                 job.step = "finding dish photos"
-                storage = StorageClient.from_settings(settings)
+                storage = storage_for(settings)
                 storage.ensure_bucket()
 
                 with tempfile.TemporaryDirectory(prefix="restofood_") as tmp:

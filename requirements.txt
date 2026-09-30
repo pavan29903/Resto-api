@@ -4,6 +4,10 @@ annotated-types==0.7.0
 anthropic==0.116.0
 anyio==4.14.1
 asyncpg==0.31.0
+# Cloudflare R2, via its S3-compatible API. Only imported when
+# STORAGE_PROVIDER=r2, but it has to be in the image for that to be a runtime
+# switch rather than a rebuild.
+boto3==1.43.96
 certifi==2026.6.17
 cffi==2.0.0
 charset-normalizer==3.4.7
