@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import Settings, get_settings
+from app.core.storage import storage_for
 from app.models import Owner
 from app.modules.auth.service import current_owner
 from app.modules.billing.deps import editing_owner
@@ -49,6 +50,15 @@ app.include_router(public_router)
 app.include_router(billing_router)
 
 
+def _storage_ready(settings: Settings) -> bool:
+    """Can the configured backend actually be built? No secrets leak out."""
+    try:
+        storage_for(settings)
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/api/config")
 def read_config(settings: Settings = Depends(get_settings)) -> dict:
     """Which providers are live — shown in the dashboard's status strip."""
@@ -62,6 +72,14 @@ def read_config(settings: Settings = Depends(get_settings)) -> dict:
         "extraction_chain": [f"{p}:{m}" for p, m in chain],
         "image_provider": settings.image_provider,
         "image_fallback": settings.image_fallback,
+        # Where new dish photographs are written. Worth exposing: a
+        # misconfigured storage backend doesn't fail loudly — uploads succeed
+        # and diners get broken images — so being able to read it back in one
+        # request is the difference between a glance and an investigation.
+        "storage": {
+            "provider": settings.storage_provider,
+            "configured": _storage_ready(settings),
+        },
         "menu_domain": settings.menu_domain,
         "has_extraction_key": bool(chain),
         "has_image_key": bool(settings.pexels_api_key),
