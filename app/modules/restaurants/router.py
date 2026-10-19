@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import (
@@ -366,6 +367,10 @@ class PublishIn(BaseModel):
     generate_images: bool = True
     max_images: int = 0  # 0 = every dish that still needs a photo
     replace_existing: bool = False
+    # False finds the photographs but leaves the menu unpublished, so the owner
+    # can check what was chosen first. Defaults to True so existing callers —
+    # and re-publishing an already-live menu — behave exactly as before.
+    go_live: bool = True
 
 
 @owner_router.post("/restaurants/{restaurant_id}/publish", status_code=status.HTTP_202_ACCEPTED)
@@ -389,8 +394,37 @@ async def publish_restaurant(
         generate_images=payload.generate_images,
         max_images=payload.max_images,
         replace_existing=payload.replace_existing,
+        go_live=payload.go_live,
     )
     return job.as_dict()
+
+
+@owner_router.post("/restaurants/{restaurant_id}/go-live", response_model=RestaurantOut)
+async def go_live(
+    restaurant_id: uuid.UUID,
+    owner: Owner = Depends(editing_owner),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> RestaurantOut:
+    """Make a checked menu public.
+
+    The second half of a two-step publish: photographs were found first and
+    the owner has now looked at them. Separate from `/publish` so that the
+    moment a menu becomes reachable by a stranger is an explicit decision
+    rather than a side effect of a background job finishing.
+    """
+    restaurant = await service.get_for_owner(session, restaurant_id, owner.id)
+    if restaurant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "We couldn't find that menu.")
+
+    if not restaurant.is_published:
+        restaurant.is_published = True
+        restaurant.published_at = datetime.now(timezone.utc)
+        await session.flush()
+
+    return _out(
+        restaurant, settings, sum(len(s.items) for s in restaurant.sections)
+    )
 
 
 @owner_router.get("/publish-jobs/{job_id}")

@@ -64,6 +64,7 @@ async def run_publish(
     generate_images: bool,
     max_images: int,
     replace_existing: bool = False,
+    go_live: bool = True,
 ) -> None:
     job = JOBS[job_id]
     settings: Settings = get_settings()
@@ -121,13 +122,22 @@ async def run_publish(
                             job.done += 1
                             local.unlink(missing_ok=True)
 
-            job.step = "publishing"
-            restaurant.is_published = True
-            restaurant.published_at = datetime.now(timezone.utc)
+            # `go_live=False` finds the photographs and stops, so the owner can
+            # look at what was chosen before any customer can. An automatic
+            # match gets most dishes right and some badly wrong, and finding
+            # that out from a diner is the expensive way.
+            if go_live:
+                job.step = "publishing"
+                restaurant.is_published = True
+                restaurant.published_at = datetime.now(timezone.utc)
+            else:
+                job.step = "photos ready to check"
             await session.commit()
 
             job.menu_url = settings.menu_url_for(restaurant.slug)
-            job.extra = {"slug": restaurant.slug}
+            # `live` tells the console whether this finished the job or only
+            # got as far as choosing photographs.
+            job.extra = {"slug": restaurant.slug, "live": restaurant.is_published}
             job.step = "complete"
             job.status = "done"
 
